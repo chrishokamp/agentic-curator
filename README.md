@@ -106,6 +106,40 @@ Customize the agent's behavior with a system prompt:
 uv run python -m agentic_curator --system-prompt "You are a helpful coding assistant."
 ```
 
+## Redis Setup (Memory)
+
+The agent uses Redis with vector search for persistent memory per user. This enables semantic search over past conversations.
+
+### Quick Start
+
+```bash
+# Start Redis Stack (includes vector search)
+docker compose up -d redis
+
+# Verify it's running
+docker compose ps
+```
+
+Redis will be available at `localhost:6379` and RedisInsight (web UI) at `localhost:8001`.
+
+### Environment Variables
+
+```bash
+export REDIS_URL="redis://localhost:6379"
+```
+
+When running the agent with Docker, use:
+```bash
+export REDIS_URL="redis://redis:6379"
+```
+
+### Running Everything with Docker
+
+```bash
+# Start Redis + run the agent
+docker compose up --build
+```
+
 ## Development
 
 ```bash
@@ -123,15 +157,20 @@ uv run mypy src/
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Agentic Curator                             │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────┐   │
-│  │   Slack     │    │   Message    │    │   Claude Code       │   │
-│  │   Poller    │───▶│   Router     │───▶│   Agent             │   │
-│  │  (API Poll) │    │              │    │   (SDK Client)      │   │
-│  └─────────────┘    └──────────────┘    └─────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                            Agentic Curator                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────┐         │
+│  │   Slack     │    │   Message    │    │   Claude Code       │         │
+│  │   Poller    │───▶│   Router     │───▶│   Agent             │         │
+│  │  (API Poll) │    │              │    │   (SDK Client)      │         │
+│  └─────────────┘    └──────────────┘    └──────────┬──────────┘         │
+│                                                     │                    │
+│                                          ┌──────────▼──────────┐         │
+│                                          │   Redis (Memory)    │         │
+│                                          │   Vector Search     │         │
+│                                          └─────────────────────┘         │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Troubleshooting
