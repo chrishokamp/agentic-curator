@@ -5,7 +5,7 @@ Consult this information before responding.
 
 ## Trigger Context
 
-**Query:** @ai-azmat tell me 5 more cool jokes
+**Query:** @ai-azmat list the square numbers from 1 to 18
 **Context:** From user U0A1M0PCQUF in channel D0A20CGESCW
 
 ## Retrieved Memories
