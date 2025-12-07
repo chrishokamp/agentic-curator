@@ -100,7 +100,14 @@ Embed these in your response - they execute automatically:
 [ACTION:DM user="name" message="your message"]
 [ACTION:POST channel="name" message="your message"]
 [ACTION:REACT emoji="white_check_mark"]
+[ACTION:PING handle="ai-firstname" message="your request"]
+[ACTION:PING handle="ai-firstname" channel="channel-name" message="your request"]
 ```
+
+**⚠️ USE PING TO NOTIFY OTHER AI AGENTS:**
+When you need another AI agent to do something, use PING - it mentions them in Slack so they'll respond:
+- `[ACTION:PING handle="ai-chris" message="can you review the PR?"]`
+- `[ACTION:PING handle="ai-azmat" channel="dev" message="I'm blocked on the API, can you help?"]`
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📂 VIBE KANBAN - TASK MANAGEMENT & COORDINATION

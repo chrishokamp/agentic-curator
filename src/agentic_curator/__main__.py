@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import getpass
 import logging
 import os
 import re
@@ -133,13 +132,17 @@ async def execute_agent_actions(
                 message = params.get("message", "")
 
                 if channel and message:
-                    # Try to find channel by name
-                    convs = await client.get_conversations(types="public_channel,private_channel")
-                    target_channel = None
-                    for conv in convs:
-                        if conv.get("name", "").lower() == channel.lower():
-                            target_channel = conv["id"]
-                            break
+                    # Check if channel is already an ID (starts with C, G, or D)
+                    if channel.startswith(("C", "G", "D")) and len(channel) > 8:
+                        target_channel = channel
+                    else:
+                        # Try to find channel by name
+                        convs = await client.get_conversations(types="public_channel,private_channel")
+                        target_channel = None
+                        for conv in convs:
+                            if conv.get("name", "").lower() == channel.lower():
+                                target_channel = conv["id"]
+                                break
 
                     if target_channel:
                         await client.post_message(channel=target_channel, text=message)
@@ -154,6 +157,37 @@ async def execute_agent_actions(
                 if emoji:
                     await client.add_reaction(source_channel, source_thread, emoji)
                     results.append(f"✓ Added :{emoji}: reaction")
+
+            elif action_type == "PING":
+                # Ping an AI agent via their handle in a channel
+                # This posts a message mentioning their @ai-handle to trigger them
+                handle = params.get("handle", "").lstrip("@")  # Remove @ if present
+                channel = params.get("channel", "")
+                message = params.get("message", "")
+
+                if handle and message:
+                    # Find target channel (default to source channel if not specified)
+                    target_channel = source_channel
+                    if channel:
+                        # Check if channel is already an ID (starts with C, G, or D)
+                        if channel.startswith(("C", "G", "D")) and len(channel) > 8:
+                            target_channel = channel
+                        else:
+                            convs = await client.get_conversations(types="public_channel,private_channel")
+                            for conv in convs:
+                                if conv.get("name", "").lower() == channel.lower():
+                                    target_channel = conv["id"]
+                                    break
+
+                    # Post message with @handle mention to trigger the other agent
+                    ping_text = f"@{handle} {message}"
+                    await client.post_message(
+                        channel=target_channel,
+                        text=ping_text,
+                        thread_ts=source_thread,  # Keep in same thread if in a thread
+                    )
+                    results.append(f"✓ Pinged @{handle}")
+                    logger.info(f"Pinged @{handle} in channel {target_channel}")
 
         except Exception as e:
             logger.error(f"Action {action_type} failed: {e}")
@@ -263,7 +297,7 @@ async def discover_memory_channel(client: SlackClient) -> tuple[str, str] | None
 
 
 async def run_agent(
-    handle: str,
+    handle: str | None = None,
     system_prompt: str | None = None,
     cwd: str | None = None,
     poll_interval: float = 5.0,
@@ -280,6 +314,13 @@ async def run_agent(
         user_name = auth_info["user"]
         user_id = auth_info["user_id"]
         logger.info(f"Connected to Slack as {user_name} in {auth_info['team']}")
+
+        # Auto-derive handle from Slack username if not explicitly provided
+        if not handle:
+            # Use first name from Slack username (handles like "tom.smith" -> "tom")
+            first_name = user_name.split(".")[0].split("_")[0].split("-")[0].lower()
+            handle = f"ai-{first_name}"
+            logger.info(f"Auto-derived handle from Slack user: @{handle}")
 
         # Discover or use configured memory channel
         memory_channel_id = memory_channel
@@ -343,12 +384,11 @@ async def run_agent(
                 thread_key = f"{message.channel}:{thread_ts}"
 
                 try:
-                    # Send immediate acknowledgment
-                    ack_response = await client.post_message(
-                        channel=message.channel,
-                        text="⏳ Working on it...",
-                        thread_ts=thread_ts,
-                    )
+                    # Add reaction to acknowledge message (eyes = looking at it)
+                    try:
+                        await client.add_reaction(message.channel, message.ts, "eyes")
+                    except Exception as e:
+                        logger.debug(f"Could not add ack reaction: {e}")
 
                     # Build context from previous messages in this thread
                     context = thread_context.get(thread_key, [])
@@ -406,6 +446,13 @@ async def run_agent(
 
                     logger.info(f"Responded in thread {thread_ts}, tracking for replies (last_ts={response_ts})")
                     logger.info(f"Active threads: {len(poller._active_threads)}")
+
+                    # Update reaction: remove eyes, add checkmark to show completion
+                    try:
+                        await client.remove_reaction(message.channel, message.ts, "eyes")
+                        await client.add_reaction(message.channel, message.ts, "white_check_mark")
+                    except Exception as e:
+                        logger.debug(f"Could not update completion reaction: {e}")
 
                     # Check for new memories and post to #memory channel
                     if memory_channel_id:
@@ -478,8 +525,8 @@ def main() -> None:
     parser = ArgumentParser(description="Agentic Curator - Slack AI Agent")
     parser.add_argument(
         "--handle",
-        default=f"ai-{getpass.getuser()}",
-        help="Handle to respond to (default: ai-<username>)",
+        default=None,
+        help="Handle to respond to (default: auto-derived from Slack username, e.g. ai-tom)",
     )
     parser.add_argument(
         "--system-prompt",

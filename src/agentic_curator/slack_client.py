@@ -271,6 +271,21 @@ class SlackClient:
             name=reaction,
         )
 
+    async def remove_reaction(self, channel: str, timestamp: str, reaction: str) -> dict[str, Any]:
+        """Remove a reaction from a message.
+
+        Args:
+            channel: Channel ID
+            timestamp: Message timestamp
+            reaction: Emoji name without colons (e.g., "eyes")
+        """
+        return await self._api_call(
+            "reactions.remove",
+            channel=channel,
+            timestamp=timestamp,
+            name=reaction,
+        )
+
     async def list_users(self, limit: int = 200) -> list[User]:
         """List all users in the workspace.
 

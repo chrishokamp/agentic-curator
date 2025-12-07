@@ -1,197 +1,384 @@
 # Agentic Curator
 
-A Slack AI agent powered by Claude Code. The agent connects to Slack using your browser credentials (no app installation required), monitors for messages, and responds using a Claude Code agent.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://github.com/yourusername/agentic-curator/actions/workflows/tests.yml/badge.svg)](https://github.com/yourusername/agentic-curator/actions)
 
-## Installation
+A Slack AI agent powered by Claude Code. The agent connects to Slack using your browser credentials (no app installation required), monitors for messages, and responds using the Claude Agent SDK.
+
+> **Perfect for**: Building intelligent Slack assistants, automating workflows, running code in response to Slack messages, and maintaining persistent memory across conversations.
+
+## ✨ Features
+
+- **No App Installation Required** - Uses your browser Slack credentials
+- **Claude Code Integration** - Leverage the Claude Agent SDK for powerful AI responses
+- **Persistent Memory** - Redis-powered vector search for semantic conversation history
+- **Customizable Behavior** - Flexible system prompts and trigger handles
+- **Thread-Aware** - Responds in conversation threads keeping context organized
+- **Easy Setup** - Single command to get started with `uv sync`
+- **Docker Ready** - Includes docker-compose for full stack (Redis + Agent)
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+- Slack workspace access (browser-based)
+- Optional: Docker for Redis
+
+### Installation
 
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/agentic-curator.git
 cd agentic-curator
 
-# Install with uv
+# Install dependencies with uv
 uv sync
 
-# Install dev dependencies (for testing)
+# Install dev dependencies (optional, for testing)
 uv sync --extra dev
 ```
 
-## Getting Your Slack Credentials
+### Get Your Slack Credentials
 
-The agent uses your Slack browser session credentials (token + cookie). No Slack app installation required.
+The agent requires your Slack browser session credentials. **[Detailed Instructions →](docs/getting-credentials.md)**
 
-**[→ Detailed Instructions](docs/getting-credentials.md)**
+#### Quick Method (Console)
 
-### Get Token (Console Script)
+1. Open Slack in your **browser** (not the desktop app)
+2. Press `F12` → switch to **Console** tab
+3. Get your token:
+   ```javascript
+   JSON.parse(localStorage.localConfig_v2).teams[document.location.pathname.match(/client\/([A-Z0-9]+)/)[1]].token
+   ```
+4. Get your cookie:
+   ```javascript
+   document.cookie.match(/d=(xoxd-[^;]+)/)[1]
+   ```
 
-1. Open Slack in your **browser** (not desktop app)
-2. Press `F12` → **Console** tab
-3. Paste and run:
-
-```javascript
-JSON.parse(localStorage.localConfig_v2).teams[document.location.pathname.match(/client\/([A-Z0-9]+)/)[1]].token
-```
-
-### Get Cookie
-
-In the same Console, run:
-```javascript
-document.cookie.match(/d=(xoxd-[^;]+)/)[1]
-```
-
-Copy both values and set as environment variables.
-
-## Usage
-
-### With Environment Variables
+### Run the Agent
 
 ```bash
+# Option 1: With environment variables
 export SLACK_TOKEN="xoxc-your-token-here"
 export SLACK_COOKIE="xoxd-your-cookie-here"
+uv run python -m agentic_curator
 
+# Option 2: Interactive (you'll be prompted for credentials)
 uv run python -m agentic_curator
 ```
 
-### With Interactive Input
+That's it! The agent will start polling Slack for messages.
 
-```bash
-uv run python -m agentic_curator
-# You will be prompted for token and cookie
-```
+## 📖 Usage
 
-### Command Line Options
+### Basic Command Line Options
 
 ```bash
 uv run python -m agentic_curator --help
 
 Options:
-  --handle TEXT         Handle to respond to (default: ai-<username>)
-  --system-prompt TEXT  System prompt for the Claude agent
-  --cwd TEXT            Working directory for the Claude agent
-  --poll-interval FLOAT Poll interval in seconds (default: 5)
-  --debug               Enable debug logging
+  --handle TEXT             Handle to respond to (default: ai-<username>)
+  --system-prompt TEXT      System prompt for the Claude agent
+  --cwd TEXT                Working directory for agent execution
+  --poll-interval FLOAT     Poll interval in seconds (default: 5.0)
+  --debug                   Enable debug logging
 ```
 
-### Example with Custom Prompt
+### Examples
 
+**Custom handle and behavior:**
 ```bash
 uv run python -m agentic_curator \
   --handle "ai-curator" \
-  --system-prompt "You are a knowledge curator. Help users find and organize information." \
-  --cwd "/path/to/workspace"
+  --system-prompt "You are a helpful code reviewer. Analyze code and provide constructive feedback."
 ```
 
-## How It Works
-
-1. **Authentication**: Uses your Slack browser credentials (token + cookie) to connect as you
-2. **Polling**: Periodically checks for new messages in your conversations
-3. **Trigger**: Responds when:
-   - Someone mentions your handle (e.g., `@ai-chris`)
-   - Someone DMs you directly
-4. **Response**: Uses Claude Code agent to generate responses, posted to the same thread
-
-## Configuration
-
-### Handle
-By default, the agent responds to `@ai-<your-username>`. Customize with `--handle`:
-
+**High-performance polling:**
 ```bash
-uv run python -m agentic_curator --handle "my-ai-assistant"
+uv run python -m agentic_curator \
+  --poll-interval 2.0 \
+  --handle "ai-dev"
 ```
 
-### System Prompt
-Customize the agent's behavior with a system prompt:
-
+**With working directory for file operations:**
 ```bash
-uv run python -m agentic_curator --system-prompt "You are a helpful coding assistant."
+uv run python -m agentic_curator \
+  --cwd "/path/to/project" \
+  --handle "ai-build"
 ```
 
-## Redis Setup (Memory)
+## 🏗️ Architecture
 
-The agent uses Redis with vector search for persistent memory per user. This enables semantic search over past conversations.
+The agent follows a clean architecture pattern:
 
-### Quick Start
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Agentic Curator                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Slack Poller         Message Router      Claude Agent SDK     │
+│  ┌──────────────┐     ┌──────────────┐    ┌──────────────────┐ │
+│  │ Monitors for  │────▶│ Routes to    │───▶│ AI-powered      │ │
+│  │ @mentions &   │     │ Claude Code  │    │ responses       │ │
+│  │ DMs           │     │ Agent        │    │ & actions       │ │
+│  └──────────────┘     └──────────────┘    └────────┬─────────┘ │
+│                                                     │           │
+│                          ┌────────────────────────────────┐     │
+│                          │   Redis (Persistent Memory)    │     │
+│                          │   • Conversation history       │     │
+│                          │   • Vector embeddings          │     │
+│                          │   • Semantic search            │     │
+│                          └────────────────────────────────┘     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
+### Core Components
+
+- **SlackPoller** - Continuously polls Slack API for new messages
+- **MessageRouter** - Identifies triggers and routes messages to the agent
+- **Claude Agent** - Powered by the Claude Agent SDK for intelligent responses
+- **MemoryManager** - Redis-backed vector database for conversation context
+- **AuthHandler** - Secure credential management for Slack authentication
+
+## 💾 Memory & Persistence
+
+The agent uses Redis with vector search to maintain persistent memory across conversations.
+
+### Setup Redis
+
+**With Docker (Recommended):**
 ```bash
-# Start Redis Stack (includes vector search)
+# Start Redis Stack (includes vector search support)
 docker compose up -d redis
 
 # Verify it's running
 docker compose ps
+
+# Access RedisInsight UI at http://localhost:8001
 ```
 
-Redis will be available at `localhost:6379` and RedisInsight (web UI) at `localhost:8001`.
-
-### Environment Variables
-
+**Manual Setup:**
 ```bash
+# Install Redis Stack locally
+# See: https://redis.io/docs/latest/operate/oss_and_stack/install/
+
+# Set Redis URL
 export REDIS_URL="redis://localhost:6379"
 ```
 
-When running the agent with Docker, use:
+### How Memory Works
+
+1. Conversations are stored as vector embeddings in Redis
+2. User queries are converted to embeddings for semantic search
+3. Relevant past conversations are retrieved and provided as context
+4. The agent maintains contextual awareness across multiple interactions
+
+### Memory Configuration
+
 ```bash
+# Custom Redis URL
+export REDIS_URL="redis://custom-host:6379/0"
+
+# When using Docker Compose
 export REDIS_URL="redis://redis:6379"
 ```
 
-### Running Everything with Docker
+## 🐳 Docker Deployment
+
+Run everything in containers:
 
 ```bash
-# Start Redis + run the agent
+# Build and start both Redis and the agent
 docker compose up --build
+
+# Or just Redis
+docker compose up -d redis
+
+# View logs
+docker compose logs -f agentic-curator
 ```
 
-## Development
+See `docker-compose.yml` for configuration details.
+
+## 🛠️ Development
+
+### Running Tests
 
 ```bash
-# Run tests
+# Run all tests with verbose output
 uv run pytest tests/ -v
 
-# Lint and format
+# Run specific test file
+uv run pytest tests/test_agent.py -v
+
+# Run with coverage
+uv run pytest tests/ --cov=src/agentic_curator
+```
+
+### Code Quality
+
+```bash
+# Lint and format code
 uv run ruff check src/ tests/ --fix
 uv run ruff format src/ tests/
 
-# Type check
+# Type checking
 uv run mypy src/
+
+# All checks at once
+uv run ruff check src/ tests/ && uv run mypy src/
 ```
 
-## Architecture
+### Project Structure
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                            Agentic Curator                               │
-├──────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────┐         │
-│  │   Slack     │    │   Message    │    │   Claude Code       │         │
-│  │   Poller    │───▶│   Router     │───▶│   Agent             │         │
-│  │  (API Poll) │    │              │    │   (SDK Client)      │         │
-│  └─────────────┘    └──────────────┘    └──────────┬──────────┘         │
-│                                                     │                    │
-│                                          ┌──────────▼──────────┐         │
-│                                          │   Redis (Memory)    │         │
-│                                          │   Vector Search     │         │
-│                                          └─────────────────────┘         │
-└──────────────────────────────────────────────────────────────────────────┘
+agentic-curator/
+├── src/
+│   └── agentic_curator/
+│       ├── __main__.py           # Entry point
+│       ├── agent.py              # Claude agent wrapper
+│       ├── slack_client.py       # Slack API client
+│       ├── poller.py             # Message polling logic
+│       ├── auth.py               # Authentication
+│       └── memory.py             # Memory/context management
+├── tests/                        # Test suite
+├── docs/                         # Documentation
+├── docker-compose.yml            # Docker configuration
+├── pyproject.toml               # Project metadata
+└── README.md                    # This file
 ```
 
-## Troubleshooting
+## 📋 Configuration
+
+### System Prompt Examples
+
+**Code Review Assistant:**
+```bash
+--system-prompt "You are an expert code reviewer. Analyze code for quality, security, and performance. Provide constructive feedback."
+```
+
+**Research Assistant:**
+```bash
+--system-prompt "You are a research assistant. Help users find information, summarize documents, and answer questions based on provided context."
+```
+
+**DevOps Helper:**
+```bash
+--system-prompt "You are a DevOps specialist. Help with infrastructure, deployment strategies, and system administration tasks."
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SLACK_TOKEN` | Your Slack client token (xoxc-*) | - |
+| `SLACK_COOKIE` | Your Slack session cookie (xoxd-*) | - |
+| `REDIS_URL` | Redis connection string | redis://localhost:6379 |
+| `LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING) | INFO |
+
+## 🔧 Troubleshooting
 
 ### "No token provided" error
-Make sure you've set the `SLACK_TOKEN` environment variable or provide it when prompted.
+```bash
+# Make sure credentials are set
+echo $SLACK_TOKEN
+echo $SLACK_COOKIE
+
+# Or pass them when prompted
+uv run python -m agentic_curator
+```
 
 ### "Client token requires cookie" error
-Client tokens (xoxc-*) require the session cookie. Make sure you've also set `SLACK_COOKIE`.
+The client token (xoxc-*) requires the session cookie. Ensure both are set:
+```bash
+export SLACK_TOKEN="xoxc-..."
+export SLACK_COOKIE="xoxd-..."
+```
 
-### Messages not being detected
-- Check that you're mentioning the correct handle
-- Ensure the token/cookie are valid (try refreshing from browser)
-- Enable debug logging with `--debug` to see what's happening
+### Messages not detected
+1. ✅ Verify you're using the correct handle
+2. ✅ Check the agent is running (`uv run python -m agentic_curator`)
+3. ✅ Enable debug logging: `--debug`
+4. ✅ Refresh your Slack token if older than a few days
 
 ### Rate limiting
-If you see rate limit errors, increase the poll interval:
+If you hit Slack API rate limits, increase the polling interval:
 ```bash
 uv run python -m agentic_curator --poll-interval 10
 ```
 
-## License
+### Redis connection errors
+```bash
+# Verify Redis is running
+docker compose ps
 
-MIT
+# Check connection
+redis-cli -u $REDIS_URL ping
+# Should return: PONG
+
+# View Redis logs
+docker compose logs redis
+```
+
+## 📚 Documentation
+
+- [Getting Slack Credentials](docs/getting-credentials.md) - Detailed credential extraction
+- [Architecture](docs/architecture.md) - Deep dive into the system design
+- [API Reference](docs/api.md) - Complete API documentation
+- [Contributing](CONTRIBUTING.md) - How to contribute
+- [Changelog](CHANGELOG.md) - Version history
+
+## 🤝 Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Quick Start for Contributors
+
+```bash
+# Fork and clone
+git clone https://github.com/yourusername/agentic-curator.git
+cd agentic-curator
+
+# Create a feature branch
+git checkout -b feature/your-feature
+
+# Install dev dependencies
+uv sync --extra dev
+
+# Make your changes and test
+uv run pytest tests/ -v
+
+# Ensure code quality
+uv run ruff check . --fix && uv run mypy src/
+
+# Push and create a PR
+git push origin feature/your-feature
+```
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with the [Claude Agent SDK](https://github.com/anthropics/python-sdk)
+- Slack integration via [python-slack-sdk](https://github.com/slackapi/python-slack-sdk)
+- Memory powered by [Redis Stack](https://redis.io/docs/latest/operate/oss_and_stack/)
+
+## 🐛 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/agentic-curator/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/agentic-curator/discussions)
+- **Documentation**: [/docs](docs/) directory
+
+---
+
+<div align="center">
+
+**[Report Bug](https://github.com/yourusername/agentic-curator/issues)** • **[Request Feature](https://github.com/yourusername/agentic-curator/issues)** • **[Contribute](CONTRIBUTING.md)**
+
+</div>
