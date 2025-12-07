@@ -147,6 +147,9 @@ async def run_agent(
                                 text=message.text,
                                 top_k=5,
                             )
+                            logger.info(f"Found {len(memories)} relevant memories")
+                            for mem in memories:
+                                logger.debug(f"  Memory: {mem.summary[:50]}... (score={mem.score:.2f})")
                             trigger_context = (
                                 f"From user {message.user} in channel {message.channel}"
                             )
@@ -156,9 +159,10 @@ async def run_agent(
                                 output_path=memory_cache_path,
                                 trigger_context=trigger_context,
                             )
-                            logger.debug(f"Generated memory cache with {len(memories)} entries")
                         except Exception as e:
                             logger.warning(f"Error retrieving memories: {e}")
+                            import traceback
+                            logger.debug(traceback.format_exc())
 
                     # Generate response using Claude
                     slack_reply = await agent.respond_simple(message.text)
