@@ -24,12 +24,15 @@ class MessagePoller:
     handle: str  # e.g., "ai-chris"
     poll_interval: float = 5.0
     respond_to_all_relevant: bool = False
+    memory_channel_name: str = "memory"  # Name of the #memory channel
 
     _running: bool = False
     _last_seen: dict[str, str] = field(default_factory=dict)  # channel -> ts
     _conversations: list[dict[str, Any]] = field(default_factory=list)
     # Track threads we've participated in: (channel, thread_ts) -> last_seen_ts
     _active_threads: dict[tuple[str, str], str] = field(default_factory=dict)
+    # Memory channel ID (found during init)
+    _memory_channel_id: str | None = None
 
     @property
     def handle_pattern(self) -> re.Pattern[str]:
@@ -75,6 +78,22 @@ class MessagePoller:
         """Refresh the list of conversations to poll."""
         self._conversations = await self.client.get_conversations()
         logger.debug(f"Found {len(self._conversations)} conversations")
+
+        # Find the memory channel
+        for conv in self._conversations:
+            if conv.get("name") == self.memory_channel_name:
+                self._memory_channel_id = conv["id"]
+                logger.info(f"Found #{self.memory_channel_name} channel: {self._memory_channel_id}")
+                break
+
+    @property
+    def memory_channel_id(self) -> str | None:
+        """Get the memory channel ID."""
+        return self._memory_channel_id
+
+    def is_memory_channel(self, channel_id: str) -> bool:
+        """Check if a channel is the memory channel."""
+        return self._memory_channel_id is not None and channel_id == self._memory_channel_id
 
     async def _initialize_timestamps(self) -> None:
         """Initialize last_seen timestamps to current time."""

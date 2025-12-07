@@ -224,6 +224,106 @@ class SlackClient:
         channel_id = await self.open_dm(user_id)
         return await self.post_message(channel=channel_id, text=text)
 
+    async def search_messages(
+        self,
+        query: str,
+        channel: str | None = None,
+        count: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search for messages.
+
+        Args:
+            query: Search query (supports Slack search syntax)
+            channel: Optional channel name to search in (e.g., "memory")
+            count: Max results to return
+
+        Returns:
+            List of message matches
+        """
+        # Build search query
+        search_query = query
+        if channel:
+            search_query = f"in:#{channel} {query}"
+
+        data = await self._api_call(
+            "search.messages",
+            query=search_query,
+            count=count,
+            sort="timestamp",
+            sort_dir="desc",
+        )
+
+        matches = data.get("messages", {}).get("matches", [])
+        return matches
+
+    async def add_reaction(self, channel: str, timestamp: str, reaction: str) -> dict[str, Any]:
+        """Add a reaction to a message.
+
+        Args:
+            channel: Channel ID
+            timestamp: Message timestamp
+            reaction: Emoji name without colons (e.g., "white_check_mark")
+        """
+        return await self._api_call(
+            "reactions.add",
+            channel=channel,
+            timestamp=timestamp,
+            name=reaction,
+        )
+
+    async def list_users(self, limit: int = 200) -> list[User]:
+        """List all users in the workspace.
+
+        Args:
+            limit: Max users to return
+
+        Returns:
+            List of User objects
+        """
+        users = []
+        cursor = None
+
+        while len(users) < limit:
+            kwargs: dict[str, Any] = {"limit": min(limit - len(users), 200)}
+            if cursor:
+                kwargs["cursor"] = cursor
+
+            data = await self._api_call("users.list", **kwargs)
+
+            for member in data.get("members", []):
+                if member.get("deleted") or member.get("is_bot"):
+                    continue
+                users.append(User(
+                    id=member.get("id", ""),
+                    name=member.get("name", ""),
+                    real_name=member.get("real_name", member.get("name", "")),
+                ))
+
+            cursor = data.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return users
+
+    async def find_user_by_name(self, name: str) -> User | None:
+        """Find a user by name (case-insensitive partial match).
+
+        Args:
+            name: Name to search for (matches against name or real_name)
+
+        Returns:
+            User object or None if not found
+        """
+        name_lower = name.lower()
+        users = await self.list_users()
+
+        for user in users:
+            if (name_lower in user.name.lower() or
+                name_lower in user.real_name.lower()):
+                return user
+
+        return None
+
 
 class SlackAPIError(Exception):
     """Slack API error."""
