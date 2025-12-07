@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    pass
 
 # Token patterns from slackdump
 CLIENT_TOKEN_RE = re.compile(r"xoxc-[0-9]+-[0-9]+-[0-9]+-[0-9a-z]{64}")

@@ -99,7 +99,8 @@ class MessagePoller:
                 messages = await self.client.get_history(channel_id, oldest=oldest)
 
                 if messages:
-                    logger.debug(f"Found {len(messages)} new message(s) in {conv.get('name', channel_id)}")
+                    conv_name = conv.get("name", channel_id)
+                    logger.debug(f"Found {len(messages)} new message(s) in {conv_name}")
 
                 # Process messages in chronological order (oldest first)
                 for msg in reversed(messages):

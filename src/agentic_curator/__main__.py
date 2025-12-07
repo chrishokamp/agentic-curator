@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import getpass
 import logging
-import os
-import sys
 from argparse import ArgumentParser
+from pathlib import Path
 
 from .agent import AgentConfig, ClaudeAgent
 from .auth import load_auth
+from .memory import MemoryEntry, MemoryStore, generate_memory_cache
 from .poller import MessagePoller
 from .slack_client import SlackClient
 
@@ -57,10 +57,37 @@ async def run_agent(
     system_prompt: str | None = None,
     cwd: str | None = None,
     poll_interval: float = 5.0,
+    enable_memory: bool = True,
+    redis_url: str | None = None,
 ) -> None:
-    """Run the Slack agent."""
+    """Run the Slack agent.
+
+    Args:
+        handle: The handle to respond to (e.g., "ai-chris").
+        system_prompt: Optional system prompt for Claude.
+        cwd: Working directory for Claude agent.
+        poll_interval: Polling interval in seconds.
+        enable_memory: Whether to enable Redis memory storage.
+        redis_url: Redis URL (defaults to REDIS_URL env var).
+    """
     # Load authentication
     auth = load_auth()
+
+    # Resolve working directory
+    work_dir = Path(cwd) if cwd else Path.cwd()
+    memory_cache_path = work_dir / "memory_cache.md"
+
+    # Initialize memory store if enabled
+    memory_store: MemoryStore | None = None
+    if enable_memory:
+        try:
+            memory_store = MemoryStore(redis_url=redis_url)
+            memory_store.ensure_index()
+            logger.info("Memory store initialized")
+        except Exception as e:
+            logger.warning(f"Could not initialize memory store: {e}")
+            logger.warning("Running without memory persistence")
+            memory_store = None
 
     # Create Slack client
     async with SlackClient(auth) as client:
@@ -81,7 +108,7 @@ async def run_agent(
         # Create Claude agent
         agent_config = AgentConfig(
             system_prompt=system_prompt or "",
-            cwd=cwd,
+            cwd=str(work_dir),
         )
         agent = ClaudeAgent(config=agent_config)
 
@@ -93,6 +120,8 @@ async def run_agent(
         )
 
         logger.info(f"Starting agent with handle @{handle}")
+        if memory_store:
+            logger.info("Memory storage enabled")
         logger.info("Press Ctrl+C to stop")
 
         try:
@@ -108,13 +137,62 @@ async def run_agent(
                         thread_ts=thread_ts,
                     )
 
-                    # Generate response using Claude
-                    response = await agent.respond_simple(message.text)
+                    # Retrieve relevant memories and generate cache file
+                    if memory_store:
+                        try:
+                            memories = memory_store.query(
+                                text=message.text,
+                                user_id=message.user,
+                                top_k=5,
+                            )
+                            trigger_context = (
+                                f"From user {message.user} in channel {message.channel}"
+                            )
+                            generate_memory_cache(
+                                query_text=message.text,
+                                memories=memories,
+                                output_path=memory_cache_path,
+                                trigger_context=trigger_context,
+                            )
+                            logger.debug(f"Generated memory cache with {len(memories)} entries")
+                        except Exception as e:
+                            logger.warning(f"Error retrieving memories: {e}")
+
+                    # Generate response using Claude (with memory if enabled)
+                    if memory_store:
+                        response = await agent.respond_with_memory(message.text)
+                        slack_reply = response.slack_reply
+
+                        # Store new memories
+                        if response.memory_entries:
+                            entries_to_store = []
+                            for entry_data in response.memory_entries:
+                                if entry_data.get("should_persist", True):
+                                    entry = MemoryEntry(
+                                        summary=entry_data.get("summary", ""),
+                                        details=entry_data.get("details", ""),
+                                        user_id=message.user,
+                                        channel_id=message.channel,
+                                        thread_ts=thread_ts,
+                                        source="conversation",
+                                        status=entry_data.get("status", "active"),
+                                        task_type=entry_data.get("task_type", "general"),
+                                    )
+                                    entries_to_store.append(entry)
+
+                            if entries_to_store:
+                                try:
+                                    stored_ids = memory_store.upsert_batch(entries_to_store)
+                                    logger.info(f"Stored {len(stored_ids)} new memories")
+                                except Exception as e:
+                                    logger.warning(f"Error storing memories: {e}")
+                    else:
+                        slack_reply = await agent.respond_simple(message.text)
 
                     # Post response to thread
                     await client.post_message(
                         channel=message.channel,
-                        text=response,
+                        text=slack_reply,
                         thread_ts=thread_ts,
                     )
                     logger.info(f"Responded to message in thread {thread_ts}")
@@ -131,6 +209,13 @@ async def run_agent(
         except KeyboardInterrupt:
             logger.info("Shutting down...")
             await poller.stop()
+
+        # Clean up memory cache file
+        if memory_cache_path.exists():
+            try:
+                memory_cache_path.unlink()
+            except Exception:
+                pass
 
 
 def main() -> None:
@@ -156,6 +241,15 @@ def main() -> None:
         help="Poll interval in seconds (default: 5)",
     )
     parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable Redis memory storage",
+    )
+    parser.add_argument(
+        "--redis-url",
+        help="Redis URL (default: REDIS_URL env var or redis://localhost:6379)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging",
@@ -173,6 +267,8 @@ def main() -> None:
             system_prompt=args.system_prompt,
             cwd=args.cwd,
             poll_interval=args.poll_interval,
+            enable_memory=not args.no_memory,
+            redis_url=args.redis_url,
         )
     )
 
