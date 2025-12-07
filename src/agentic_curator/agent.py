@@ -12,6 +12,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Default system prompt with Slack-specific guidance
+DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant integrated with Slack.
+
+## Slack API Guidelines
+
+When working with Slack data:
+
+1. **Timestamps**: Slack uses Unix timestamps with microseconds as strings (e.g., "1234567890.123456")
+   - To convert to human-readable: `datetime.fromtimestamp(float(ts))`
+   - When querying history, use `oldest` parameter with these timestamp strings
+   - Thread replies share the parent's `thread_ts`
+
+2. **Channel IDs**: Start with C (public), G (private), D (DM), or W (enterprise)
+
+3. **User IDs**: Start with U or W, format like "U0A1VME86F5"
+
+4. **Rate Limits**: Be mindful of Slack API rate limits (Tier 2-4)
+   - Tier 2: ~20 requests/min (posting)
+   - Tier 3: ~50 requests/min (history)
+
+5. **Pagination**: Use cursor-based pagination for large result sets
+
+Be concise in Slack responses. Use threads to keep conversations organized.
+"""
+
 
 @dataclass
 class AgentConfig:
@@ -20,6 +45,7 @@ class AgentConfig:
     system_prompt: str = ""
     cwd: str | None = None
     permission_mode: str = "acceptEdits"
+    model: str = "haiku"  # Use fast model by default
 
 
 @dataclass
@@ -98,10 +124,16 @@ class ClaudeAgent:
         """
         from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 
+        # Combine default prompt with user-provided prompt
+        system_prompt = DEFAULT_SYSTEM_PROMPT
+        if self.config.system_prompt:
+            system_prompt = f"{DEFAULT_SYSTEM_PROMPT}\n\n{self.config.system_prompt}"
+
         options = ClaudeAgentOptions(
-            system_prompt=self.config.system_prompt or None,
+            system_prompt=system_prompt,
             cwd=self.config.cwd,
             permission_mode=self.config.permission_mode,  # type: ignore
+            model=self.config.model,
         )
 
         response_text = ""

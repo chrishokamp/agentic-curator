@@ -13,12 +13,38 @@ uv sync
 # Run tests
 uv run pytest tests/
 
-# Start the agent (interactive credential input)
-uv run python -m agentic_curator
+# Start the agent (with env vars)
+export SLACK_TOKEN='xoxc-...'
+export SLACK_COOKIE='xoxd-...'
+uv run python -m agentic_curator --handle "ai-chris"
 
-# Start with environment variables
-SLACK_TOKEN=xoxc-... SLACK_COOKIE=xoxd-... uv run python -m agentic_curator
+# Or interactive credential input
+uv run python -m agentic_curator
 ```
+
+## Session Notes (2025-12-07)
+
+### What Works
+- Authentication with xoxc token + xoxd cookie (browser credentials)
+- Polling for new messages across all user's conversations
+- Detecting handle mentions (`@ai-chris`) and DMs
+- Sending immediate "Working on it..." acknowledgment
+- Processing requests with Claude Code (haiku model for speed)
+- Responding in threads
+- Startup DM notification to user
+
+### Key Implementation Details
+- **Auth**: `Authorization: Bearer xoxc-...` header + `Cookie: d=xoxd-...` header
+- **Model**: Uses haiku by default for fast responses
+- **System prompt**: Includes Slack API guidance (timestamps, rate limits, etc.)
+
+### Files Changed This Session
+- `src/agentic_curator/auth.py` - Slack authentication
+- `src/agentic_curator/slack_client.py` - API client with cookie auth
+- `src/agentic_curator/poller.py` - Message polling and filtering
+- `src/agentic_curator/agent.py` - Claude Code integration with Slack-aware prompts
+- `src/agentic_curator/__main__.py` - CLI with acknowledgment messages
+- `docs/getting-credentials.md` - Browser credential extraction guide
 
 ## Architecture
 

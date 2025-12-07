@@ -14,10 +14,16 @@ from .auth import load_auth
 from .poller import MessagePoller
 from .slack_client import SlackClient
 
+# Configure logging - only our modules, not third-party
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
+# Silence noisy third-party loggers
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,13 +98,20 @@ async def run_agent(
         try:
             async for message in poller.start():
                 logger.info(f"Processing message from {message.user}: {message.text[:100]}...")
+                thread_ts = message.thread_ts or message.ts
 
                 try:
+                    # Send immediate acknowledgment
+                    await client.post_message(
+                        channel=message.channel,
+                        text="⏳ Working on it...",
+                        thread_ts=thread_ts,
+                    )
+
                     # Generate response using Claude
                     response = await agent.respond_simple(message.text)
 
                     # Post response to thread
-                    thread_ts = message.thread_ts or message.ts
                     await client.post_message(
                         channel=message.channel,
                         text=response,
@@ -109,10 +122,9 @@ async def run_agent(
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
                     # Post error message to thread
-                    thread_ts = message.thread_ts or message.ts
                     await client.post_message(
                         channel=message.channel,
-                        text=f"Sorry, I encountered an error: {e}",
+                        text=f"❌ Sorry, I encountered an error: {e}",
                         thread_ts=thread_ts,
                     )
 
@@ -152,7 +164,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        # Only enable debug for our modules
+        logging.getLogger("agentic_curator").setLevel(logging.DEBUG)
 
     asyncio.run(
         run_agent(

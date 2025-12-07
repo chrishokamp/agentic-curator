@@ -98,32 +98,38 @@ class MessagePoller:
             try:
                 messages = await self.client.get_history(channel_id, oldest=oldest)
 
+                if messages:
+                    logger.debug(f"Found {len(messages)} new message(s) in {conv.get('name', channel_id)}")
+
                 # Process messages in chronological order (oldest first)
                 for msg in reversed(messages):
                     # Update last seen
                     self._last_seen[channel_id] = msg.ts
 
-                    # Skip own messages
-                    if msg.user == self.client.user_id:
-                        continue
-
                     # Check if this message should trigger a response
                     if self._should_respond(msg, conv):
+                        logger.info(f"New message to respond to: {msg.text[:80]}...")
                         yield msg
+                    else:
+                        logger.debug(f"Ignoring message: {msg.text[:50]}...")
 
             except Exception as e:
                 logger.debug(f"Error polling {channel_id}: {e}")
 
     def _should_respond(self, message: Message, conv: dict[str, Any]) -> bool:
         """Determine if we should respond to this message."""
-        # Always respond to DMs
-        if conv.get("is_im"):
-            logger.debug(f"DM from {message.user}: {message.text[:50]}...")
+        # Skip messages that look like our startup message
+        if "AI Agent Online" in message.text:
+            return False
+
+        # Check for handle mention - this is the primary trigger
+        if self.handle_pattern.search(message.text):
+            logger.debug(f"Handle mention detected: {message.text[:50]}...")
             return True
 
-        # Check for handle mention
-        if self.handle_pattern.search(message.text):
-            logger.debug(f"Mention in {conv.get('name', conv['id'])}: {message.text[:50]}...")
+        # Respond to all DMs (including self-DMs)
+        if conv.get("is_im"):
+            logger.debug(f"DM: {message.text[:50]}...")
             return True
 
         # TODO: If respond_to_all_relevant, use LLM to determine relevance
