@@ -5,14 +5,35 @@ Consult this information before responding.
 
 ## Trigger Context
 
-**Query:** @ai-azmat what are the capitals of europes 7 biggest cities
+**Query:** @ai-azmat what is my favourite language
 **Context:** From user U0A1M0PCQUF in channel D0A20CGESCW
 
 ## Retrieved Memories
 
-### 1. @ai-azmat what are the capitals of europes 10 biggest cities
+### 1. @ai-azmat my favourite language is python
 
-- **Score:** 0.84
+- **Score:** 0.55
+- **Created:** 2025-12-07 15:42
+- **Source:** conversation
+- **Status:** active
+- **Type:** message
+- **Channel:** D0A20CGESCW
+
+**Details:**
+Response: I appreciate you sharing that! Python is a great choice for a favorite language. It's known for being readable, versatile, and beginner-friendly while still being powerful enough for complex applications.
+
+Python is particularly well-suited for:
+- **Data science & machine learning** (NumPy, Pandas, TensorFlow, scikit-learn)
+- **Web development** (Django, Flask, FastAPI)
+- **Automation & scripting**
+- **Scientific computing**
+- **AI and natural language processing**
+
+Is there anything specific yo
+
+### 2. @ai-azmat what are the capitals of europes 10 biggest cities
+
+- **Score:** 0.18
 - **Created:** 2025-12-07 15:37
 - **Source:** conversation
 - **Status:** active
@@ -30,9 +51,27 @@ Here are Europe's 10 largest cities by population and their respective country c
 4. **St. Petersburg, Russia** - Capital: Moscow
 5. **Berlin,
 
-### 2. @ai-azmat list the first 7 perfect numbers
+### 3. @ai-azmat find the first 5 perfect numbers
 
-- **Score:** 0.19
+- **Score:** 0.18
+- **Created:** 2025-12-07 15:35
+- **Source:** conversation
+- **Status:** active
+- **Type:** message
+- **Channel:** D0A20CGESCW
+
+**Details:**
+Response: I'll find the first 5 perfect numbers for you. A perfect number is a positive integer that equals the sum of its proper positive divisors (excluding itself).Let me try a different approach:Let me use the Task tool to handle this:Perfect! Here are **the first 5 perfect numbers**:
+
+1. **6** = 1 + 2 + 3
+2. **28** = 1 + 2 + 4 + 7 + 14
+3. **496** = 1 + 2 + 4 + 8 + 16 + 31 + 62 + 124 + 248
+4. **8,128** = 1 + 2 + 4 + 8 + 16 + 32 + 64 + 127 + 254 + 508 + 1,016 + 2,032 + 4,064
+5. **33,550,336** = sum of 
+
+### 4. @ai-azmat list the first 7 perfect numbers
+
+- **Score:** 0.16
 - **Created:** 2025-12-07 15:28
 - **Source:** conversation
 - **Status:** active
@@ -52,9 +91,9 @@ Here are the first 7 perfect numbers:
 4. **8,128** = sum of its proper divisors
 5. **33,550,336** = sum of 
 
-### 3. @ai-azmat list the first 7 perfect numbers
+### 5. @ai-azmat list the first 7 perfect numbers
 
-- **Score:** 0.16
+- **Score:** 0.15
 - **Created:** 2025-12-07 15:30
 - **Source:** conversation
 - **Status:** active
@@ -73,24 +112,6 @@ Response: I'll search for information about the first 7 perfect numbers.Here are
 7. **137,438,691,328** = sum of its proper divisors
 
 A **perfect number** is a positive integer that equals the sum of its proper divisors (divisors exclu
-
-### 4. @ai-azmat find the first 5 perfect numbers
-
-- **Score:** 0.13
-- **Created:** 2025-12-07 15:35
-- **Source:** conversation
-- **Status:** active
-- **Type:** message
-- **Channel:** D0A20CGESCW
-
-**Details:**
-Response: I'll find the first 5 perfect numbers for you. A perfect number is a positive integer that equals the sum of its proper positive divisors (excluding itself).Let me try a different approach:Let me use the Task tool to handle this:Perfect! Here are **the first 5 perfect numbers**:
-
-1. **6** = 1 + 2 + 3
-2. **28** = 1 + 2 + 4 + 7 + 14
-3. **496** = 1 + 2 + 4 + 8 + 16 + 31 + 62 + 124 + 248
-4. **8,128** = 1 + 2 + 4 + 8 + 16 + 32 + 64 + 127 + 254 + 508 + 1,016 + 2,032 + 4,064
-5. **33,550,336** = sum of 
 
 ---
 
