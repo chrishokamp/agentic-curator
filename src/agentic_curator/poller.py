@@ -28,6 +28,8 @@ class MessagePoller:
     _running: bool = False
     _last_seen: dict[str, str] = field(default_factory=dict)  # channel -> ts
     _conversations: list[dict[str, Any]] = field(default_factory=list)
+    # Track threads we've participated in: (channel, thread_ts) -> last_seen_ts
+    _active_threads: dict[tuple[str, str], str] = field(default_factory=dict)
 
     @property
     def handle_pattern(self) -> re.Pattern[str]:
@@ -91,6 +93,7 @@ class MessagePoller:
 
     async def _poll_once(self) -> AsyncIterator[Message]:
         """Poll all conversations once for new messages."""
+        # First, poll channel-level messages
         for conv in self._conversations:
             channel_id = conv["id"]
             oldest = self._last_seen.get(channel_id, "0")
@@ -115,6 +118,69 @@ class MessagePoller:
 
             except Exception as e:
                 logger.debug(f"Error polling {channel_id}: {e}")
+
+        # Then, poll active threads for new replies
+        async for msg in self._poll_active_threads():
+            yield msg
+
+    async def _poll_active_threads(self) -> AsyncIterator[Message]:
+        """Poll threads we've participated in for new replies."""
+        if not self._active_threads:
+            return
+
+        logger.debug(f"Polling {len(self._active_threads)} active threads...")
+
+        for (channel_id, thread_ts), last_seen in list(self._active_threads.items()):
+            try:
+                # Get all replies in the thread
+                replies = await self.client.get_thread_replies(
+                    channel=channel_id,
+                    thread_ts=thread_ts,
+                )
+
+                logger.debug(f"Thread {thread_ts}: {len(replies)} total messages, last_seen={last_seen}")
+
+                # Filter to only new replies (timestamp > last_seen, not the parent, not from us)
+                for reply in replies:
+                    # Skip parent message
+                    if reply.ts == thread_ts:
+                        continue
+
+                    # Skip already-seen messages
+                    if reply.ts <= last_seen:
+                        continue
+
+                    # Skip our own messages but update last_seen
+                    if reply.user == self.client.user_id:
+                        self._active_threads[(channel_id, thread_ts)] = reply.ts
+                        logger.debug(f"Skipping our own message in thread, updating last_seen to {reply.ts}")
+                        continue
+
+                    # Update last seen for this thread
+                    self._active_threads[(channel_id, thread_ts)] = reply.ts
+
+                    logger.info(f"New reply in tracked thread {thread_ts}: {reply.text[:80]}...")
+                    yield reply
+
+            except Exception as e:
+                logger.warning(f"Error polling thread {thread_ts}: {e}")
+
+    def track_thread(self, channel: str, thread_ts: str, last_ts: str | None = None) -> None:
+        """Start tracking a thread for new replies.
+
+        Call this after the agent responds in a thread to continue monitoring it.
+        """
+        key = (channel, thread_ts)
+        if key not in self._active_threads:
+            self._active_threads[key] = last_ts or thread_ts
+            logger.info(f"Now tracking thread {thread_ts} in channel {channel}")
+
+    def untrack_thread(self, channel: str, thread_ts: str) -> None:
+        """Stop tracking a thread."""
+        key = (channel, thread_ts)
+        if key in self._active_threads:
+            del self._active_threads[key]
+            logger.info(f"Stopped tracking thread {thread_ts}")
 
     def _should_respond(self, message: Message, conv: dict[str, Any]) -> bool:
         """Determine if we should respond to this message."""
