@@ -141,6 +141,7 @@ async def run_agent(
                     )
 
                     # Retrieve relevant memories and generate cache file
+                    memories = []
                     if memory_store:
                         try:
                             memories = memory_store.query(
@@ -164,8 +165,23 @@ async def run_agent(
                             import traceback
                             logger.debug(traceback.format_exc())
 
+                    # Build prompt with memory context if available
+                    prompt = message.text
+                    if memories:
+                        memory_context = "\n".join([
+                            f"- {m.summary} (relevance: {m.score:.0%})"
+                            for m in memories[:3]  # Top 3 most relevant
+                        ])
+                        prompt = f"""Previous relevant context from our conversation history:
+{memory_context}
+
+Current message: {message.text}
+
+Use the context above if relevant to your response."""
+                        logger.info(f"Added {len(memories[:3])} memories to prompt")
+
                     # Generate response using Claude
-                    slack_reply = await agent.respond_simple(message.text)
+                    slack_reply = await agent.respond_simple(prompt)
 
                     # Store the message and response in memory
                     if memory_store:
