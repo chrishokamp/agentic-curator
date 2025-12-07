@@ -1,241 +1,332 @@
-"""Tests for the memory system."""
+"""Tests for the memory store module."""
+
+from __future__ import annotations
+
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from redisvl.query import VectorQuery
+
 from agentic_curator.memory import (
-    Memory,
+    MemoryEntry,
     MemoryStore,
-    parse_memory_message,
-    create_memory_from_slack,
-    memory_store,
-    MEMORY_TYPES,
+    MockEmbedder,
+    generate_memory_cache,
 )
 
 
-class TestMemoryParsing:
-    """Test memory message parsing."""
+class TestMemoryEntry:
+    """Tests for MemoryEntry dataclass."""
 
-    def test_parse_learned(self):
-        """Parse a 'learned' memory."""
-        memory = parse_memory_message(
-            "Learned: The deploy script needs sudo",
-            agent="ai-chris",
+    def test_default_values(self) -> None:
+        """Test that default values are set correctly."""
+        entry = MemoryEntry(summary="Test summary")
+
+        assert entry.summary == "Test summary"
+        assert entry.details == ""
+        assert entry.user_id == ""
+        assert entry.channel_id == ""
+        assert entry.thread_ts == ""
+        assert entry.source == "conversation"
+        assert entry.status == "active"
+        assert entry.task_type == "general"
+        assert entry.memory_id != ""  # Auto-generated UUID
+        assert entry.created_at > 0  # Auto-generated timestamp
+        assert entry.score == 0.0
+
+    def test_custom_values(self) -> None:
+        """Test that custom values override defaults."""
+        entry = MemoryEntry(
+            summary="Test",
+            details="Details here",
+            user_id="U123",
+            channel_id="C456",
+            thread_ts="1234567890.123456",
+            source="manual",
+            status="completed",
+            task_type="task",
+            memory_id="custom-id",
+            created_at=1000.0,
+            score=0.95,
         )
-        assert memory is not None
-        assert memory.memory_type == "learned"
-        assert memory.content == "The deploy script needs sudo"
-        assert memory.agent == "ai-chris"
 
-    def test_parse_fact(self):
-        """Parse a 'fact' memory."""
-        memory = parse_memory_message(
-            "Fact: Redis runs on port 6379",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert memory.memory_type == "fact"
-        assert memory.content == "Redis runs on port 6379"
-
-    def test_parse_preference(self):
-        """Parse a 'preference' memory."""
-        memory = parse_memory_message(
-            "Preference: User likes bullet points",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert memory.memory_type == "preference"
-        assert memory.content == "User likes bullet points"
-
-    def test_parse_context(self):
-        """Parse a 'context' memory."""
-        memory = parse_memory_message(
-            "Context: Working on auth refactor",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert memory.memory_type == "context"
-        assert memory.content == "Working on auth refactor"
-
-    def test_parse_decision(self):
-        """Parse a 'decision' memory."""
-        memory = parse_memory_message(
-            "Decision: Using PostgreSQL for the database",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert memory.memory_type == "decision"
-        assert memory.content == "Using PostgreSQL for the database"
-
-    def test_parse_with_tags(self):
-        """Parse a memory with tags - tags are extracted from content."""
-        memory = parse_memory_message(
-            "Learned: CI takes 10 minutes #ci #deployment",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert "CI takes 10 minutes" in memory.content
-        assert "ci" in memory.tags
-        assert "deployment" in memory.tags
-
-    def test_parse_multiline(self):
-        """Parse a multi-line memory."""
-        memory = parse_memory_message(
-            "learned: vibe-kanban workflow\n1. List projects\n2. Create task",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert memory.memory_type == "learned"
-        assert "vibe-kanban workflow" in memory.content
-        assert "List projects" in memory.content
-        assert "Create task" in memory.content
-
-    def test_parse_case_insensitive(self):
-        """Memory types should be case insensitive."""
-        memory = parse_memory_message(
-            "LEARNED: Something important",
-            agent="ai-chris",
-        )
-        assert memory is not None
-        assert memory.memory_type == "learned"
-
-    def test_parse_invalid_format(self):
-        """Invalid format should return None."""
-        memory = parse_memory_message(
-            "This is just a regular message",
-            agent="ai-chris",
-        )
-        assert memory is None
-
-    def test_parse_with_slack_metadata(self):
-        """Parse with Slack metadata."""
-        memory = parse_memory_message(
-            "Fact: API rate limit is 100/min",
-            agent="ai-chris",
-            slack_ts="1234567890.123456",
-            channel="C0123456",
-        )
-        assert memory is not None
-        assert memory.slack_ts == "1234567890.123456"
-        assert memory.channel == "C0123456"
+        assert entry.details == "Details here"
+        assert entry.user_id == "U123"
+        assert entry.channel_id == "C456"
+        assert entry.thread_ts == "1234567890.123456"
+        assert entry.source == "manual"
+        assert entry.status == "completed"
+        assert entry.task_type == "task"
+        assert entry.memory_id == "custom-id"
+        assert entry.created_at == 1000.0
+        assert entry.score == 0.95
 
 
-class TestMemory:
-    """Test Memory dataclass."""
+class TestMockEmbedder:
+    """Tests for MockEmbedder."""
 
-    def test_to_dict(self):
-        """Convert memory to dict."""
-        memory = Memory(
-            id="abc123",
-            content="Test content",
-            memory_type="fact",
-            agent="ai-chris",
-            timestamp="2025-12-07T12:00:00Z",
-            tags=["test", "example"],
-        )
-        data = memory.to_dict()
-        assert data["id"] == "abc123"
-        assert data["content"] == "Test content"
-        assert data["type"] == "fact"
-        assert data["tags"] == "test,example"
+    def test_embed_produces_normalized_vectors(self) -> None:
+        """Test that embeddings are normalized."""
+        import numpy as np
 
-    def test_from_dict(self):
-        """Create memory from dict."""
-        data = {
-            "id": "abc123",
-            "content": "Test content",
-            "type": "fact",
-            "agent": "ai-chris",
-            "timestamp": "2025-12-07T12:00:00Z",
-            "tags": "test,example",
-        }
-        memory = Memory.from_dict(data)
-        assert memory.id == "abc123"
-        assert memory.content == "Test content"
-        assert memory.memory_type == "fact"
-        assert memory.tags == ["test", "example"]
+        embedder = MockEmbedder(dims=384)
+        vec = embedder.embed_one("test text")
 
-    def test_to_slack_message(self):
-        """Format memory as Slack message."""
-        memory = Memory(
-            id="abc123",
-            content="Redis runs on 6379",
-            memory_type="fact",
-            agent="ai-chris",
-            timestamp="2025-12-07T12:00:00Z",
-            tags=["redis", "infrastructure"],
-        )
-        msg = memory.to_slack_message()
-        assert "Fact: Redis runs on 6379" in msg
-        assert "#redis" in msg
-        assert "#infrastructure" in msg
+        assert vec.shape == (384,)
+        # Check normalization (magnitude should be ~1)
+        magnitude = np.linalg.norm(vec)
+        assert abs(magnitude - 1.0) < 1e-5
+
+    def test_embed_deterministic(self) -> None:
+        """Test that same text produces same embedding."""
+        embedder = MockEmbedder(dims=384)
+
+        vec1 = embedder.embed_one("test text")
+        vec2 = embedder.embed_one("test text")
+
+        assert (vec1 == vec2).all()
+
+    def test_embed_different_texts(self) -> None:
+        """Test that different texts produce different embeddings."""
+        embedder = MockEmbedder(dims=384)
+
+        vec1 = embedder.embed_one("text one")
+        vec2 = embedder.embed_one("text two")
+
+        assert not (vec1 == vec2).all()
+
+    def test_embed_batch(self) -> None:
+        """Test batch embedding."""
+        embedder = MockEmbedder(dims=128)
+        texts = ["text one", "text two", "text three"]
+
+        vecs = embedder.embed(texts)
+
+        assert len(vecs) == 3
+        for vec in vecs:
+            assert vec.shape == (128,)
+
+    def test_caching(self) -> None:
+        """Test that embeddings are cached."""
+        embedder = MockEmbedder(dims=384)
+
+        embedder.embed_one("cached text")
+        assert "cached text" not in embedder._cache  # Key is hash, not text
+        assert len(embedder._cache) == 1
 
 
 class TestMemoryStore:
-    """Test MemoryStore."""
+    """Tests for MemoryStore (mocked Redis)."""
 
-    def test_cache_memory(self):
-        """Cache and retrieve memory."""
-        store = MemoryStore()
-        memory = Memory(
-            id="test123",
-            content="Test",
-            memory_type="fact",
-            agent="ai-chris",
-            timestamp="2025-12-07T12:00:00Z",
+    @pytest.fixture
+    def mock_index(self) -> MagicMock:
+        """Create a mock SearchIndex."""
+        index = MagicMock()
+        index.exists.return_value = True
+        index.query.return_value = []
+        index.load.return_value = ["memory:test-id"]
+        return index
+
+    @pytest.fixture
+    def store(self, mock_index: MagicMock) -> MemoryStore:
+        """Create a MemoryStore with mocked index."""
+        with patch("agentic_curator.memory.SearchIndex") as mock_search_index:
+            mock_search_index.from_dict.return_value = mock_index
+            store = MemoryStore(redis_url="redis://localhost:6379")
+            store._index = mock_index
+            store._initialized = True
+            return store
+
+    def test_upsert_creates_entry(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test upserting a memory entry."""
+        entry = MemoryEntry(
+            summary="Test memory",
+            details="Test details",
+            user_id="U123",
         )
-        store.cache_memory(memory)
-        assert store.get_cached("test123") == memory
 
-    def test_get_all_cached(self):
-        """Get all cached memories."""
-        store = MemoryStore()
-        m1 = Memory(id="1", content="A", memory_type="fact", agent="a", timestamp="t")
-        m2 = Memory(id="2", content="B", memory_type="fact", agent="a", timestamp="t")
-        store.cache_memory(m1)
-        store.cache_memory(m2)
-        cached = store.get_all_cached()
-        assert len(cached) == 2
+        result = store.upsert(entry)
 
-    def test_format_memories_for_context(self):
-        """Format memories for agent context."""
-        store = MemoryStore()
-        m1 = Memory(id="1", content="Redis on 6379", memory_type="fact", agent="a", timestamp="t", tags=["redis"])
-        m2 = Memory(id="2", content="User likes brevity", memory_type="preference", agent="a", timestamp="t")
-        store.cache_memory(m1)
-        store.cache_memory(m2)
+        assert result == entry.memory_id
+        mock_index.load.assert_called_once()
+        call_args = mock_index.load.call_args
+        data = call_args[0][0][0]
+        assert data["summary"] == "Test memory"
+        assert data["details"] == "Test details"
+        assert data["user_id"] == "U123"
 
-        context = store.format_memories_for_context(store.get_all_cached())
-        assert "## Relevant Memories" in context
-        assert "[fact] Redis on 6379" in context
-        assert "[preference] User likes brevity" in context
-        assert "redis" in context
+    def test_upsert_batch(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test batch upserting memory entries."""
+        entries = [
+            MemoryEntry(summary="Memory 1"),
+            MemoryEntry(summary="Memory 2"),
+            MemoryEntry(summary="Memory 3"),
+        ]
 
-    def test_redis_key_generation(self):
-        """Test Redis key generation."""
-        store = MemoryStore(redis_prefix="memory:")
-        assert store.get_redis_key("abc123") == "memory:abc123"
+        mock_index.load.return_value = [f"memory:{e.memory_id}" for e in entries]
+        result = store.upsert_batch(entries)
 
+        assert len(result) == 3
+        mock_index.load.assert_called_once()
+        call_args = mock_index.load.call_args
+        data = call_args[0][0]
+        assert len(data) == 3
 
-class TestCreateMemoryFromSlack:
-    """Test the convenience function."""
+    def test_upsert_batch_empty(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test batch upserting with empty list."""
+        result = store.upsert_batch([])
 
-    def test_create_and_cache(self):
-        """Create memory and cache it."""
-        # Clear any existing cache
-        memory_store._memories.clear()
+        assert result == []
+        mock_index.load.assert_not_called()
 
-        memory = create_memory_from_slack(
-            text="Fact: Test fact",
-            agent="ai-chris",
-            slack_ts="123.456",
-            channel="C123",
+    def test_query_returns_entries(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test querying memories."""
+        mock_index.query.return_value = [
+            {
+                "memory_id": "test-id-1",
+                "summary": "Found memory",
+                "details": "Details",
+                "user_id": "U123",
+                "channel_id": "C456",
+                "thread_ts": "1234567890.123456",
+                "source": "conversation",
+                "status": "active",
+                "task_type": "general",
+                "created_at": 1000.0,
+                "vector_distance": 0.1,
+            }
+        ]
+
+        results = store.query("test query", user_id="U123")
+
+        assert len(results) == 1
+        assert results[0].summary == "Found memory"
+        assert results[0].user_id == "U123"
+        assert results[0].score == pytest.approx(0.9)  # 1.0 - 0.1
+
+    def test_query_with_filters(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test querying with filters."""
+        mock_index.query.return_value = []
+
+        store.query(
+            "test query",
+            user_id="U123",
+            channel_id="C456",
+            status="active",
+            task_type="task",
+            top_k=10,
         )
-        assert memory is not None
-        assert memory_store.get_cached(memory.id) == memory
 
-    def test_invalid_message_returns_none(self):
-        """Invalid message should return None."""
-        memory = create_memory_from_slack(
-            text="Just a regular message",
-            agent="ai-chris",
-        )
-        assert memory is None
+        mock_index.query.assert_called_once()
+        # Verify a VectorQuery was passed
+        call_args = mock_index.query.call_args
+        query = call_args[0][0]
+        assert isinstance(query, VectorQuery)
+
+    def test_delete(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test deleting a memory."""
+        result = store.delete("test-id")
+
+        assert result is True
+        mock_index.client.delete.assert_called_once_with("memory:test-id")
+
+    def test_delete_not_found(self, store: MemoryStore, mock_index: MagicMock) -> None:
+        """Test deleting non-existent memory."""
+        mock_index.client.delete.side_effect = Exception("Not found")
+
+        result = store.delete("nonexistent")
+
+        assert result is False
+
+
+class TestGenerateMemoryCache:
+    """Tests for memory cache file generation."""
+
+    def test_generates_file(self) -> None:
+        """Test that memory cache file is generated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "memory_cache.md"
+            memories = [
+                MemoryEntry(
+                    summary="Test memory",
+                    details="Test details",
+                    created_at=datetime(2024, 1, 15, 10, 30).timestamp(),
+                    score=0.85,
+                ),
+            ]
+
+            result = generate_memory_cache(
+                query_text="test query",
+                memories=memories,
+                output_path=output_path,
+            )
+
+            assert result == output_path
+            assert output_path.exists()
+            content = output_path.read_text()
+            assert "# Memory Cache" in content
+            assert "test query" in content
+            assert "Test memory" in content
+
+    def test_empty_memories(self) -> None:
+        """Test generation with no memories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "memory_cache.md"
+
+            generate_memory_cache(
+                query_text="test query",
+                memories=[],
+                output_path=output_path,
+            )
+
+            content = output_path.read_text()
+            assert "No relevant memories found" in content
+
+    def test_includes_trigger_context(self) -> None:
+        """Test that trigger context is included."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "memory_cache.md"
+
+            generate_memory_cache(
+                query_text="test query",
+                memories=[],
+                output_path=output_path,
+                trigger_context="From user U123 in channel C456",
+            )
+
+            content = output_path.read_text()
+            assert "From user U123 in channel C456" in content
+
+    def test_memory_formatting(self) -> None:
+        """Test that memories are formatted correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "memory_cache.md"
+            memories = [
+                MemoryEntry(
+                    summary="Important task",
+                    details="Must complete by Friday",
+                    source="conversation",
+                    status="active",
+                    task_type="task",
+                    channel_id="C123",
+                    created_at=datetime(2024, 1, 15, 10, 30).timestamp(),
+                    score=0.92,
+                ),
+            ]
+
+            generate_memory_cache(
+                query_text="task query",
+                memories=memories,
+                output_path=output_path,
+            )
+
+            content = output_path.read_text()
+            assert "Important task" in content
+            assert "Score:" in content
+            assert "0.92" in content
+            assert "Must complete by Friday" in content
+            assert "Type:** task" in content
+            assert "Channel:** C123" in content

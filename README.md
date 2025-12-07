@@ -108,7 +108,13 @@ uv run python -m agentic_curator --system-prompt "You are a helpful coding assis
 
 ## Redis Setup (Memory)
 
-The agent uses Redis with vector search for persistent memory per user. This enables semantic search over past conversations.
+The agent uses Redis with vector search for persistent memory per user. This enables semantic search over past conversations, so the agent can recall relevant context from previous interactions.
+
+### What Redis Does
+
+- **Stores conversation history** per user with metadata (channel, thread, timestamps)
+- **Vector embeddings** using sentence-transformers for semantic similarity
+- **Fast retrieval** of relevant past conversations when responding to new messages
 
 ### Quick Start
 
@@ -120,7 +126,9 @@ docker compose up -d redis
 docker compose ps
 ```
 
-Redis will be available at `localhost:6379` and RedisInsight (web UI) at `localhost:8001`.
+Redis will be available at:
+- **Redis**: `localhost:6379`
+- **RedisInsight (built-in)**: `localhost:8001`
 
 ### Environment Variables
 
@@ -139,6 +147,31 @@ export REDIS_URL="redis://redis:6379"
 # Start Redis + run the agent
 docker compose up --build
 ```
+
+### Observability with RedisInsight
+
+RedisInsight provides a GUI for monitoring and debugging Redis data, including vector indexes.
+
+```bash
+# Run RedisInsight (standalone)
+docker run -d --name redisinsight -p 5540:5540 redis/redisinsight:latest
+```
+
+Then open http://localhost:5540 and connect to Redis:
+
+| Setting | Value |
+|---------|-------|
+| Host | `host.docker.internal` |
+| Port | `6379` |
+| Name | `local-redis` (optional) |
+
+> **Note**: Use `host.docker.internal` instead of `localhost` because RedisInsight runs in a container and needs to reach Redis on your host machine.
+
+Once connected, you can:
+- Browse stored memories under the `memory:*` keys
+- Inspect the `agent_memory` vector index
+- Monitor real-time commands
+- Debug search queries
 
 ## Development
 

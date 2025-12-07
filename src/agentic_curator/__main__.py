@@ -9,10 +9,11 @@ import os
 import re
 import sys
 from argparse import ArgumentParser
+from pathlib import Path
 
 from .agent import AgentConfig, ClaudeAgent
 from .auth import load_auth
-from .memory import create_memory_from_slack, memory_store
+from .memory import MemoryStore, generate_memory_cache
 from .poller import MessagePoller
 from .slack_client import SlackClient
 
@@ -215,18 +216,18 @@ async def check_and_post_new_memories(
             for i in range(0, len(lines) - 1, 2):
                 memory_data[lines[i].strip()] = lines[i + 1].strip()
 
-            if not memory_data.get("content"):
+            if not memory_data.get("summary"):
                 continue
 
             # Format and post to #memory
-            memory_type = memory_data.get("type", "learned")
-            content = memory_data.get("content", "")
-            slack_thread = memory_data.get("slack_thread", "")
+            summary = memory_data.get("summary", "")
+            source = memory_data.get("source", "conversation")
+            thread_ts = memory_data.get("thread_ts", "")
+            channel_id = memory_data.get("channel_id", "")
 
             # Build message with link back to original thread
-            msg = f"🧠 *{memory_type}*: {content}"
-            if slack_thread and ":" in slack_thread:
-                channel_id, thread_ts = slack_thread.split(":", 1)
+            msg = f"🧠 *{source}*: {summary}"
+            if thread_ts and channel_id:
                 # Slack deep link format
                 msg += f"\n\n_Source: <https://slack.com/archives/{channel_id}/p{thread_ts.replace('.', '')}|original thread>_"
 
@@ -267,11 +268,42 @@ async def run_agent(
     system_prompt: str | None = None,
     cwd: str | None = None,
     poll_interval: float = 5.0,
+    enable_memory: bool = True,
+    redis_url: str | None = None,
     memory_channel: str | None = None,
 ) -> None:
-    """Run the Slack agent."""
+    """Run the Slack agent.
+
+    Args:
+        handle: The handle to respond to (e.g., "ai-chris").
+        system_prompt: Optional system prompt for Claude.
+        cwd: Working directory for Claude agent.
+        poll_interval: Polling interval in seconds.
+        enable_memory: Whether to enable Redis memory storage.
+        redis_url: Redis URL (defaults to REDIS_URL env var).
+        memory_channel: Optional Slack channel ID for memory (default: auto-discover #memory).
+    """
     # Load authentication
     auth = load_auth()
+
+    # Resolve working directory
+    work_dir = Path(cwd) if cwd else Path.cwd()
+    memory_cache_path = work_dir / "memory_cache.md"
+
+    # Initialize memory store if enabled
+    memory_store: MemoryStore | None = None
+    if enable_memory:
+        try:
+            effective_url = redis_url or "redis://localhost:6379"
+            logger.debug(f"Connecting to Redis at {effective_url}")
+            memory_store = MemoryStore(redis_url=redis_url)
+            memory_store.ensure_index()
+            logger.info(f"Memory store initialized (Redis: {effective_url})")
+        except Exception as e:
+            logger.warning(f"Could not initialize memory store: {e}")
+            logger.debug(f"Full exception: {type(e).__name__}: {e}")
+            logger.warning("Running without memory persistence")
+            memory_store = None
 
     # Create Slack client
     async with SlackClient(auth) as client:
@@ -305,7 +337,7 @@ async def run_agent(
         # Create Claude agent (memory channel info added per-message)
         agent_config = AgentConfig(
             system_prompt=system_prompt or "",
-            cwd=cwd,
+            cwd=str(work_dir),
             mcp_servers=DEFAULT_MCP_SERVERS,
         )
         agent = ClaudeAgent(config=agent_config)
@@ -318,6 +350,8 @@ async def run_agent(
         )
 
         logger.info(f"Starting agent with handle @{handle}")
+        if memory_store:
+            logger.info("Memory storage enabled")
         logger.info("Press Ctrl+C to stop")
 
         # Track conversation context per thread: thread_key -> list of (role, message)
@@ -334,11 +368,6 @@ async def run_agent(
             async for message in poller.start():
                 logger.info(f"Processing message from {message.user}: {message.text[:100]}...")
 
-                # Handle #memory channel messages specially
-                if poller.is_memory_channel(message.channel):
-                    await handle_memory_message(message, client, agent)
-                    continue
-
                 thread_ts = message.thread_ts or message.ts
                 thread_key = f"{message.channel}:{thread_ts}"
 
@@ -350,31 +379,48 @@ async def run_agent(
                         thread_ts=thread_ts,
                     )
 
-                    # Build context from previous messages in this thread
-                    context = thread_context.get(thread_key, [])
+                    # Retrieve relevant memories and generate cache file
+                    memories = []
+                    if memory_store:
+                        try:
+                            memories = memory_store.query(
+                                text=message.text,
+                                top_k=5,
+                            )
+                            logger.info(f"Found {len(memories)} relevant memories")
+                            for mem in memories:
+                                logger.debug(f"  Memory: {mem.summary[:50]}... (score={mem.score:.2f})")
+                            trigger_context = (
+                                f"From user {message.user} in channel {message.channel}"
+                            )
+                            generate_memory_cache(
+                                query_text=message.text,
+                                memories=memories,
+                                output_path=memory_cache_path,
+                                trigger_context=trigger_context,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Error retrieving memories: {e}")
+                            import traceback
+                            logger.debug(traceback.format_exc())
 
-                    # Add relevant memories to context
-                    memories = memory_store.get_all_cached()
-                    memory_context = memory_store.format_memories_for_context(memories[-10:])
-
-                    # Add user message to context
-                    context.append(("user", message.text))
-
-                    # Build full prompt with thread context for memory storage
-                    thread_info = f"\n\n## Current Thread Context\nChannel: {message.channel}\nThread: {thread_ts}\nFor memory storage, use slack_thread: \"{message.channel}:{thread_ts}\""
-
+                    # Build prompt with memory context if available
                     prompt = message.text
-                    if memory_context:
-                        prompt = f"{memory_context}\n\n---\n\nUser message: {message.text}{thread_info}"
-                    else:
-                        prompt = f"{message.text}{thread_info}"
+                    if memories:
+                        memory_context = "\n".join([
+                            f"- {m.summary} (relevance: {m.score:.0%})"
+                            for m in memories[:3]  # Top 3 most relevant
+                        ])
+                        prompt = f"""Previous relevant context from our conversation history:
+{memory_context}
 
-                    # Generate response using Claude with thread context
-                    response = await agent.respond(
-                        thread_id=thread_key,
-                        message=prompt,
-                        context=context[-10:] if len(context) > 1 else None,  # Last 10 messages
-                    )
+Current message: {message.text}
+
+Use the context above if relevant to your response."""
+                        logger.info(f"Added {len(memories[:3])} memories to prompt")
+
+                    # Generate response using Claude
+                    response = await agent.respond_simple(prompt)
 
                     # Execute any actions in the response
                     cleaned_response, action_results = await execute_agent_actions(
@@ -385,9 +431,19 @@ async def run_agent(
                     if action_results:
                         cleaned_response += "\n\n" + "\n".join(action_results)
 
-                    # Add assistant response to context
-                    context.append(("assistant", cleaned_response))
-                    thread_context[thread_key] = context[-20:]  # Keep last 20 exchanges
+                    # Store the message and response in memory
+                    if memory_store:
+                        try:
+                            memory_id = memory_store.store_message(
+                                text=message.text,
+                                user_id=message.user,
+                                channel_id=message.channel,
+                                thread_ts=thread_ts,
+                                response=cleaned_response,
+                            )
+                            logger.info(f"Stored message in memory: {memory_id}")
+                        except Exception as e:
+                            logger.warning(f"Error storing message: {e}")
 
                     # Post response to thread (with robot emoji prefix)
                     response_msg = await client.post_message(
@@ -428,49 +484,12 @@ async def run_agent(
             logger.info("Shutting down...")
             await poller.stop()
 
-
-async def handle_memory_message(message: "Message", client: SlackClient, agent: ClaudeAgent) -> None:
-    """Handle a message in the #memory channel.
-
-    Memory messages are parsed and stored in Redis, with a reaction to confirm.
-    """
-    from .slack_client import Message
-
-    # Try to parse as a memory
-    memory = create_memory_from_slack(
-        text=message.text,
-        agent=f"user:{message.user}",  # Track who created the memory
-        slack_ts=message.ts,
-        channel=message.channel,
-    )
-
-    if memory:
-        logger.info(f"Stored memory from #memory: [{memory.memory_type}] {memory.content[:50]}...")
-
-        # Store in Redis via agent (using MCP tools)
-        # The agent will use hset to store each field
-        try:
-            redis_key = memory_store.get_redis_key(memory.id)
-            # Use a simple query to store the memory
-            store_prompt = f"""Store this memory in Redis silently (no response needed):
-Key: {redis_key}
-Fields: {memory.to_dict()}
-
-Use hset to store each field. Don't respond with anything."""
-
-            # Fire and forget - we don't need the response
-            # In practice, we'd want to use the MCP tools directly here
-
-            # Add checkmark reaction to confirm storage
-            await client.add_reaction(
-                channel=message.channel,
-                timestamp=message.ts,
-                reaction="brain",  # 🧠 emoji
-            )
-        except Exception as e:
-            logger.warning(f"Could not add reaction or store in Redis: {e}")
-    else:
-        logger.debug(f"Message in #memory not parsed as memory: {message.text[:50]}...")
+        # Clean up memory cache file
+        if memory_cache_path.exists():
+            try:
+                memory_cache_path.unlink()
+            except Exception:
+                pass
 
 
 def main() -> None:
@@ -496,6 +515,15 @@ def main() -> None:
         help="Poll interval in seconds (default: 5)",
     )
     parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable Redis memory storage",
+    )
+    parser.add_argument(
+        "--redis-url",
+        help="Redis URL (default: REDIS_URL env var or redis://localhost:6379)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging",
@@ -517,6 +545,8 @@ def main() -> None:
             system_prompt=args.system_prompt,
             cwd=args.cwd,
             poll_interval=args.poll_interval,
+            enable_memory=not args.no_memory,
+            redis_url=args.redis_url,
             memory_channel=args.memory_channel,
         )
     )
