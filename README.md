@@ -69,6 +69,10 @@ Options:
   --system-prompt TEXT  System prompt for the Claude agent
   --cwd TEXT            Working directory for the Claude agent
   --poll-interval FLOAT Poll interval in seconds (default: 5)
+  --no-memory           Disable Redis memory storage
+  --redis-url TEXT      Redis URL (default: redis://localhost:6379)
+  --memory-channel TEXT Slack channel ID for memory posting
+  --personality TEXT    Agent personality (default, angry, kind, obsequious, argumentative)
   --debug               Enable debug logging
 ```
 
@@ -104,6 +108,44 @@ Customize the agent's behavior with a system prompt:
 
 ```bash
 uv run python -m agentic_curator --system-prompt "You are a helpful coding assistant."
+```
+
+### Personality
+Give your agent some personality with the `--personality` flag:
+
+```bash
+# Default: helpful and productive (no flag needed)
+uv run python -m agentic_curator
+
+# Grumpy but competent
+uv run python -m agentic_curator --personality angry
+
+# Warm and supportive
+uv run python -m agentic_curator --personality kind
+
+# Excessively eager to please
+uv run python -m agentic_curator --personality obsequious
+
+# Contrarian devil's advocate
+uv run python -m agentic_curator --personality argumentative
+```
+
+**Available Personalities:**
+
+| Personality | Description |
+|-------------|-------------|
+| `default` | Helpful，productive, professional and friendly |
+| `angry` | Perpetually frustrated, gets things done with visible annoyance |
+| `kind` | Warm, caring, supportive, celebrates wins |
+| `obsequious` | Excessively eager to please, deferential, apologetic |
+| `argumentative` | Contrarian, challenges assumptions, Socratic method |
+
+You can combine personality with a custom system prompt - the personality sets the tone while your prompt adds specific instructions:
+
+```bash
+uv run python -m agentic_curator \
+  --personality kind \
+  --system-prompt "You specialize in Python code reviews."
 ```
 
 ## Redis Setup (Memory)
@@ -172,6 +214,87 @@ Once connected, you can:
 - Inspect the `agent_memory` vector index
 - Monitor real-time commands
 - Debug search queries
+
+## Vibe Kanban Integration
+
+The agent includes integration with [vibe-kanban](https://www.npmjs.com/package/vibe-kanban) for task management via MCP (Model Context Protocol). This allows the agent to manage projects and tasks directly through Slack.
+
+### What is Vibe Kanban?
+
+Vibe Kanban is an MCP server that provides a persistent kanban-style task management system. It's ideal for tracking work items, managing projects, and organizing tasks during development sessions.
+
+### How It Works
+
+The agent automatically starts the vibe-kanban MCP server when running. You can interact with it by asking the agent to:
+
+- **List projects**: "Show me all my projects"
+- **Create projects**: "Create a new project called 'Backend Refactor'"
+- **Create tasks**: "Add a task 'Fix authentication bug' to the Backend Refactor project"
+- **Update task status**: "Mark the auth bug task as completed"
+- **Start work sessions (attempts)**: "Start working on the API optimization task"
+
+### Available MCP Tools
+
+The vibe-kanban server provides these tools to the agent:
+
+| Tool | Description |
+|------|-------------|
+| `list_projects` | List all projects |
+| `create_project` | Create a new project with name and description |
+| `get_project` | Get project details and its tasks |
+| `create_task` | Create a task within a project |
+| `update_task` | Update task status, priority, or details |
+| `delete_task` | Remove a task |
+| `start_attempt` | Begin a work session on a task |
+| `complete_attempt` | Mark a work session as complete |
+
+### Example Workflow
+
+```
+User: @ai-chris create a project called "API Migration" with description "Migrate REST API to GraphQL"
+Agent: Created project "API Migration" (ID: proj_abc123)
+
+User: @ai-chris add a task "Set up GraphQL schema" to API Migration, high priority
+Agent: Created task "Set up GraphQL schema" with high priority in API Migration
+
+User: @ai-chris start working on the GraphQL schema task
+Agent: Started attempt on "Set up GraphQL schema". Timer running.
+
+User: @ai-chris I finished the schema, mark it complete
+Agent: Completed attempt. Task "Set up GraphQL schema" marked as done.
+```
+
+### Data Persistence
+
+Vibe-kanban stores data in `~/.vibe-kanban/` by default. Projects and tasks persist across agent restarts.
+
+### Configuration
+
+The vibe-kanban MCP server is configured in `__main__.py`:
+
+```python
+DEFAULT_MCP_SERVERS = {
+    "vibe_kanban": {
+        "command": "npx",
+        "args": ["-y", "vibe-kanban@latest", "--mcp"],
+    },
+    # ... other servers
+}
+```
+
+To use a specific version or custom path:
+
+```python
+"vibe_kanban": {
+    "command": "npx",
+    "args": ["-y", "vibe-kanban@1.0.0", "--mcp", "--data-dir", "/custom/path"],
+},
+```
+
+### Requirements
+
+- Node.js 18+ (for npx)
+- The agent will automatically download vibe-kanban on first use
 
 ## Development
 

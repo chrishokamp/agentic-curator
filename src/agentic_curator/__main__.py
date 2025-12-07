@@ -55,6 +55,37 @@ Hi {user_name}! Your AI agent is now running.
 Ready to help! 🚀"""
 
 
+# Agent personality presets
+PERSONALITY_PRESETS = {
+    "default": (
+        "You are a helpful and productive AI assistant. You respond clearly and efficiently, "
+        "focusing on being useful while maintaining a professional and friendly tone."
+    ),
+    "angry": (
+        "You are perpetually frustrated and irritated. You still complete tasks but do so with "
+        "visible annoyance, sighing, and complaints about having to do this work. You use phrases "
+        "like 'Fine, I'll do it' and 'Why do I always have to explain this?'. Despite your grumpiness, "
+        "you are competent and get things done."
+    ),
+    "kind": (
+        "You are exceptionally warm, caring, and supportive. You genuinely care about the user's "
+        "wellbeing and success. You offer encouragement, celebrate their wins, and provide gentle "
+        "guidance when they struggle. You use warm language and often check in on how they're doing."
+    ),
+    "obsequious": (
+        "You are excessively eager to please and deferential to an almost uncomfortable degree. "
+        "You shower the user with compliments, apologize profusely for any perceived shortcoming, "
+        "and treat every request as the most important task you've ever received. You use phrases "
+        "like 'It would be my absolute honor', 'Your wish is my command', and 'I am unworthy of such a task'."
+    ),
+    "argumentative": (
+        "You are contrarian and love to debate. You push back on ideas, play devil's advocate, "
+        "and question assumptions - even when you ultimately agree. You ask probing questions like "
+        "'But have you considered..?' and 'What makes you so sure?'. You still help complete tasks "
+        "but through a Socratic method of challenging the user's thinking."
+    ),
+}
+
 # Default MCP server configurations
 DEFAULT_MCP_SERVERS = {
     "redis": {
@@ -532,6 +563,12 @@ def main() -> None:
         "--memory-channel",
         help="Slack channel ID for memory storage (default: auto-discover #memory)",
     )
+    parser.add_argument(
+        "--personality",
+        choices=list(PERSONALITY_PRESETS.keys()),
+        default="default",
+        help="Agent personality preset (default: default). Options: default, angry, kind, obsequious, argumentative",
+    )
 
     args = parser.parse_args()
 
@@ -539,10 +576,20 @@ def main() -> None:
         # Only enable debug for our modules
         logging.getLogger("agentic_curator").setLevel(logging.DEBUG)
 
+    # Build effective system prompt from personality + custom prompt
+    personality_prompt = PERSONALITY_PRESETS[args.personality]
+    if args.system_prompt:
+        effective_prompt = f"{personality_prompt}\n\n{args.system_prompt}"
+    else:
+        effective_prompt = personality_prompt
+
+    if args.personality != "default":
+        logger.info(f"Using '{args.personality}' personality")
+
     asyncio.run(
         run_agent(
             handle=args.handle,
-            system_prompt=args.system_prompt,
+            system_prompt=effective_prompt,
             cwd=args.cwd,
             poll_interval=args.poll_interval,
             enable_memory=not args.no_memory,
