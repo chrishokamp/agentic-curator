@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .agent import AgentConfig, ClaudeAgent
 from .auth import load_auth
-from .memory import MemoryEntry, MemoryStore, generate_memory_cache
+from .memory import MemoryStore, generate_memory_cache
 from .poller import MessagePoller
 from .slack_client import SlackClient
 
@@ -145,7 +145,6 @@ async def run_agent(
                         try:
                             memories = memory_store.query(
                                 text=message.text,
-                                user_id=message.user,
                                 top_k=5,
                             )
                             trigger_context = (
@@ -161,36 +160,22 @@ async def run_agent(
                         except Exception as e:
                             logger.warning(f"Error retrieving memories: {e}")
 
-                    # Generate response using Claude (with memory if enabled)
+                    # Generate response using Claude
+                    slack_reply = await agent.respond_simple(message.text)
+
+                    # Store the message and response in memory
                     if memory_store:
-                        response = await agent.respond_with_memory(message.text)
-                        slack_reply = response.slack_reply
-
-                        # Store new memories
-                        if response.memory_entries:
-                            entries_to_store = []
-                            for entry_data in response.memory_entries:
-                                if entry_data.get("should_persist", True):
-                                    entry = MemoryEntry(
-                                        summary=entry_data.get("summary", ""),
-                                        details=entry_data.get("details", ""),
-                                        user_id=message.user,
-                                        channel_id=message.channel,
-                                        thread_ts=thread_ts,
-                                        source="conversation",
-                                        status=entry_data.get("status", "active"),
-                                        task_type=entry_data.get("task_type", "general"),
-                                    )
-                                    entries_to_store.append(entry)
-
-                            if entries_to_store:
-                                try:
-                                    stored_ids = memory_store.upsert_batch(entries_to_store)
-                                    logger.info(f"Stored {len(stored_ids)} new memories")
-                                except Exception as e:
-                                    logger.warning(f"Error storing memories: {e}")
-                    else:
-                        slack_reply = await agent.respond_simple(message.text)
+                        try:
+                            memory_id = memory_store.store_message(
+                                text=message.text,
+                                user_id=message.user,
+                                channel_id=message.channel,
+                                thread_ts=thread_ts,
+                                response=slack_reply,
+                            )
+                            logger.info(f"Stored message in memory: {memory_id}")
+                        except Exception as e:
+                            logger.warning(f"Error storing message: {e}")
 
                     # Post response to thread
                     await client.post_message(

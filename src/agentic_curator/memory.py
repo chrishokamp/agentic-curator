@@ -102,6 +102,51 @@ class MockEmbedder:
         return self.embed([text])[0]
 
 
+class SentenceTransformerEmbedder:
+    """Real embedder using sentence-transformers for semantic embeddings."""
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+        """Initialize with a sentence-transformers model.
+
+        Args:
+            model_name: Model to use. Default 'all-MiniLM-L6-v2' is fast and 384 dims.
+                        Other options: 'all-mpnet-base-v2' (768 dims, more accurate)
+        """
+        from sentence_transformers import SentenceTransformer
+
+        self.model = SentenceTransformer(model_name)
+        self.dims = self.model.get_sentence_embedding_dimension()
+        logger.info(f"Loaded embedding model '{model_name}' with {self.dims} dimensions")
+
+    def embed(self, texts: list[str]) -> list[np.ndarray]:
+        """Generate embeddings for multiple texts."""
+        embeddings = self.model.encode(texts, convert_to_numpy=True)
+        return [emb.astype(np.float32) for emb in embeddings]
+
+    def embed_one(self, text: str) -> np.ndarray:
+        """Embed a single text."""
+        return self.model.encode(text, convert_to_numpy=True).astype(np.float32)
+
+
+def create_embedder(use_real: bool = True) -> MockEmbedder | SentenceTransformerEmbedder:
+    """Create an embedder instance.
+
+    Args:
+        use_real: If True, use sentence-transformers. If False, use mock embedder.
+
+    Returns:
+        An embedder instance.
+    """
+    if use_real:
+        try:
+            return SentenceTransformerEmbedder()
+        except Exception as e:
+            logger.warning(f"Could not load sentence-transformers: {e}")
+            logger.warning("Falling back to mock embedder")
+            return MockEmbedder()
+    return MockEmbedder()
+
+
 class MemoryStore:
     """Redis-backed memory store with vector search capabilities."""
 
@@ -110,30 +155,39 @@ class MemoryStore:
         redis_url: str | None = None,
         embedder: Any | None = None,
         embedding_dims: int = 384,
+        use_real_embedder: bool = True,
     ) -> None:
         """Initialize the memory store.
 
         Args:
             redis_url: Redis connection URL. Defaults to REDIS_URL env var.
-            embedder: Optional embedder instance. If None, uses MockEmbedder.
+            embedder: Optional embedder instance. If None, creates one.
             embedding_dims: Embedding dimensions (default 384 for sentence-transformers).
+            use_real_embedder: If True and no embedder provided, use sentence-transformers.
         """
         self.redis_url = redis_url or os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
-        self.embedding_dims = embedding_dims
+
+        # Create embedder if not provided
+        if embedder is None:
+            self._embedder = create_embedder(use_real=use_real_embedder)
+        else:
+            self._embedder = embedder
+
+        # Get actual embedding dimensions from embedder
+        self.embedding_dims = getattr(self._embedder, "dims", embedding_dims)
 
         # Update schema with correct dimensions
         schema = MEMORY_SCHEMA.copy()
         schema["fields"] = [
             f if f["name"] != "embedding" else {
                 **f,
-                "attrs": {**f["attrs"], "dims": embedding_dims},
+                "attrs": {**f["attrs"], "dims": self.embedding_dims},
             }
             for f in MEMORY_SCHEMA["fields"]
         ]
 
         self._index: SearchIndex | None = None
         self._schema = schema
-        self._embedder = embedder or MockEmbedder(dims=embedding_dims)
         self._initialized = False
 
     def _get_index(self) -> SearchIndex:
@@ -375,6 +429,49 @@ class MemoryStore:
         except Exception as e:
             logger.warning(f"Could not clear memories: {e}")
             raise
+
+    def store_message(
+        self,
+        text: str,
+        user_id: str = "",
+        channel_id: str = "",
+        thread_ts: str = "",
+        response: str = "",
+    ) -> str:
+        """Store a message and optionally its response as a memory.
+
+        This is a convenience method for storing conversation messages.
+
+        Args:
+            text: The message text (user's message).
+            user_id: Slack user ID.
+            channel_id: Slack channel ID.
+            thread_ts: Thread timestamp.
+            response: Optional agent response to include.
+
+        Returns:
+            The memory_id of the stored entry.
+        """
+        # Create a summary from the message
+        summary = text[:200] if len(text) <= 200 else text[:197] + "..."
+
+        # Include response in details if provided
+        details = ""
+        if response:
+            details = f"Response: {response[:500]}"
+
+        entry = MemoryEntry(
+            summary=summary,
+            details=details,
+            user_id=user_id,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            source="conversation",
+            status="active",
+            task_type="message",
+        )
+
+        return self.upsert(entry)
 
 
 def generate_memory_cache(
