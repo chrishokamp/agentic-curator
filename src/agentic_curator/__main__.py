@@ -81,11 +81,14 @@ async def run_agent(
     memory_store: MemoryStore | None = None
     if enable_memory:
         try:
+            effective_url = redis_url or "redis://localhost:6379"
+            logger.debug(f"Connecting to Redis at {effective_url}")
             memory_store = MemoryStore(redis_url=redis_url)
             memory_store.ensure_index()
-            logger.info("Memory store initialized")
+            logger.info(f"Memory store initialized (Redis: {effective_url})")
         except Exception as e:
             logger.warning(f"Could not initialize memory store: {e}")
+            logger.debug(f"Full exception: {type(e).__name__}: {e}")
             logger.warning("Running without memory persistence")
             memory_store = None
 
